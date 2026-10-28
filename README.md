@@ -2,6 +2,8 @@
 
 Genera efectos de sonido, foley y voces habladas con la API de ElevenLabs y los convierte en una **librería de samples buscable**, lista para arrastrar a Ableton.
 
+> **Sobre la IA:** el código lo escribió Claude Code (un asistente de programación con IA) bajo mi dirección. Yo definí el problema y el diseño, y pruebo y reviso el resultado. Aún no lo probé con la API real de ElevenLabs: los tests usan una API simulada.
+
 Problema que resuelve: un productor pierde tiempo buscando foley y one-shots, y las herramientas de generación entregan un mp3 suelto, sin saber qué nota es, cuánto dura ni cuánto costó.
 
 ## Qué hace
