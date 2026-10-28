@@ -1,9 +1,13 @@
 """Generar -> analizar -> guardar -> exportar. Lo comparten la CLI y la API."""
 import hashlib
+import io
 import json
 import os
 import re
+import shutil
 import time
+import unicodedata
+import zipfile
 from pathlib import Path
 from typing import Literal
 
@@ -30,6 +34,11 @@ class Req(BaseModel):
     influence: float = Field(0.3, ge=0, le=1)             # solo sfx
     voice: str = Field(DEFAULT_VOICE, pattern=r"^[A-Za-z0-9]{10,40}$")   # solo vox
     tags: list[str] = []
+
+
+def slug(text, words=3):
+    ascii_ = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
+    return "_".join(w.capitalize() for w in re.findall(r"[A-Za-z0-9]+", ascii_)[:words]) or "Sample"
 
 
 class Forge:
@@ -82,3 +91,26 @@ class Forge:
             self.db.add(s)
             out.append(dict(s, cached=False))
         return out
+
+    def filename(self, s):
+        parts = [slug(s["prompt"]), s["note"], f"{s['duration']:.1f}s", s["id"][:4]]
+        return "_".join(p for p in parts if p) + ".wav"
+
+    def export(self, ids, dest):
+        """Copia los WAV a dest con nombres tipo Riser_Am_2.4s_ab12.wav (Ableton no lee tags de WAV: va en el nombre)."""
+        dest = Path(dest)
+        dest.mkdir(parents=True, exist_ok=True)
+        written = []
+        for id in ids:
+            if s := self.db.get(id):
+                shutil.copyfile(self.dir / s["file"], dest / self.filename(s))
+                written.append(dest / self.filename(s))
+        return written
+
+    def zip(self, ids):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as z:    # el WAV no se comprime
+            for id in ids:
+                if s := self.db.get(id):
+                    z.write(self.dir / s["file"], self.filename(s))
+        return buf.getvalue()
