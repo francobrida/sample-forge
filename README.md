@@ -1,52 +1,52 @@
 # sample-forge
 
-Genera efectos de sonido, foley y voces habladas con la API de ElevenLabs y los convierte en una **librería de samples buscable**, lista para arrastrar a Ableton.
+Generates sound effects, foley and spoken voices with the ElevenLabs API and turns them into a **searchable sample library**, ready to drag into Ableton.
 
-> **Sobre la IA:** el código lo escribió Claude Code (un asistente de programación con IA) bajo mi dirección. Yo definí el problema y el diseño, y pruebo y reviso el resultado. Aún no lo probé con la API real de ElevenLabs: los tests usan una API simulada.
+> **About AI assistance:** the code was written by Claude Code (an AI coding assistant) under my direction. I defined the problem and the design, and I test and review the result. I have not tried it against the real ElevenLabs API yet: the tests use a simulated API.
 
-Problema que resuelve: un productor pierde tiempo buscando foley y one-shots, y las herramientas de generación entregan un mp3 suelto, sin saber qué nota es, cuánto dura ni cuánto costó.
+Problem it solves: a producer loses time hunting for foley and one-shots, and generation tools hand back a loose mp3 with no idea of what note it is, how long it is or what it cost.
 
-## Qué hace
+## What it does
 
-- **Genera** SFX/foley (`sound-generation`) y voz hablada (`text-to-speech`), con varias tomas por prompt.
-- **Analiza** cada toma: recorta silencios, normaliza a −1 dBFS, mide duración, pico y RMS, y **detecta la nota** (útil para meter un "ahh" hablado en tonalidad).
-- **Guarda** en SQLite con búsqueda de texto completo: `search riser --note A --max-dur 3`.
-- **Exporta** WAV de 24 bit con nombres como `Riser_A4_2.4s_ab12.wav`. Ableton no lee los tags de los WAV, así que la información va en el nombre.
-- **Controla el gasto**: caché por hash (el mismo pedido no vuelve a llamar a la API), estimación antes de generar, tope mensual de créditos y reintentos con backoff ante `429`.
-- **API + web** (FastAPI, una sola página HTML) con cola de jobs y 2 workers.
+- **Generates** SFX/foley (`sound-generation`) and spoken voice (`text-to-speech`), with several takes per prompt.
+- **Analyzes** every take: trims silence, normalizes to −1 dBFS, measures duration, peak and RMS, and **detects the note** (handy for dropping a spoken "ahh" into key).
+- **Stores** everything in SQLite with full-text search: `search riser --note A --max-dur 3`.
+- **Exports** 24-bit WAV files named like `Riser_A4_2.4s_ab12.wav`. Ableton does not read WAV tags, so the information goes in the filename.
+- **Controls spending**: hash-based cache (the same request never calls the API twice), cost estimate before generating, a monthly credit cap, and backoff retries on `429`.
+- **API + web** (FastAPI, a single HTML page) with a job queue and 2 workers.
 
-## Uso
+## Usage
 
 ```bash
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
-set ELEVEN_API_KEY=tu_clave              # plan gratis alcanza
+set ELEVEN_API_KEY=your_key              # the free plan is enough
 ```
 
 ```bash
 python -m sample_forge gen sfx "heavy wooden door slam, big hall" -d 2 -n 3
-python -m sample_forge gen vox "yeah!" --dry-run          # solo estima el costo
+python -m sample_forge gen vox "yeah!" --dry-run          # only estimates the cost
 python -m sample_forge search door --max-dur 3
 python -m sample_forge export "C:\Samples\forge" riser --note A
-python -m sample_forge serve                              # web en http://127.0.0.1:8000
+python -m sample_forge serve                              # web UI at http://127.0.0.1:8000
 ```
 
-Variables opcionales: `SF_MONTHLY_CREDITS` (tope, 8000 por defecto), `SF_DATA` (carpeta de datos), `SF_VOICE` (voice id por defecto), `SF_API_KEY` (si se define, la API exige el header `x-api-key`).
+Optional environment variables: `SF_MONTHLY_CREDITS` (cap, 8000 by default), `SF_DATA` (data folder), `SF_VOICE` (default voice id), `SF_API_KEY` (if set, the API requires an `x-api-key` header).
 
-## Diseño
+## Design
 
 ```
-cli / web ──► api.py (jobs, auth) ──► core.Forge ──► eleven.py   (HTTP + reintentos)
+cli / web ──► api.py (jobs, auth) ──► core.Forge ──► eleven.py   (HTTP + retries)
                                           │       └─► analyze.py (decode, trim, pitch)
-                                          └────────► db.py       (SQLite + FTS5, ledger de créditos)
+                                          └────────► db.py       (SQLite + FTS5, credit ledger)
 ```
 
-Decisiones:
+Decisions:
 
-- **Caché por hash** de `(tipo, prompt, parámetros, nº de toma)`. Las tomas llevan índice, así que `-n 4` da cuatro distintas y repetir el comando no gasta nada.
-- **Sin SDK ni librosa**: `httpx` y `numpy`. La detección de tono es autocorrelación con interpolación parabólica y corrección de errores de octava.
-- **Mp3 → WAV local**: el WAV/PCM de 44,1 kHz de ElevenLabs es de plan Pro, el mp3 funciona en el gratis.
-- **La API valida todo en el borde** (pydantic), los ids se comprueban con regex antes de tocar el disco y la búsqueda solo admite términos `\w`, así que no se cuela sintaxis FTS.
+- **Hash cache** over `(kind, prompt, parameters, take number)`. Takes carry an index, so `-n 4` gives four different ones and repeating the command costs nothing.
+- **No SDK, no librosa**: just `httpx` and `numpy`. Pitch detection is autocorrelation with parabolic interpolation and octave-error correction.
+- **mp3 → WAV locally**: ElevenLabs' 44.1 kHz WAV/PCM output needs the Pro plan, while mp3 works on the free one.
+- **The API validates everything at the edge** (pydantic), ids are checked with a regex before touching the disk, and search only accepts `\w` terms, so FTS syntax cannot leak in.
 
 ## Tests
 
@@ -54,12 +54,12 @@ Decisiones:
 .venv\Scripts\python -m pytest
 ```
 
-El análisis se prueba con tonos sintéticos de frecuencia conocida (un La 440 tiene que dar `A4`), y ElevenLabs va simulado: los tests no gastan créditos.
+Analysis is tested with synthetic tones of known frequency (a 440 Hz tone must come out as `A4`), and ElevenLabs is simulated: the tests spend no credits.
 
-## Límites
+## Limits
 
-- Los costos en créditos (`core.py`) son **estimaciones**; la fuente de verdad es tu panel de ElevenLabs.
-- La detección de nota funciona con sonidos tonales; el ruido y la percusión devuelven `—`.
-- Los jobs viven en memoria: se pierden al reiniciar el servidor.
-- Sin autenticación por usuario: pensado para uso local (escucha solo en `127.0.0.1`).
-- El plan gratuito de ElevenLabs exige atribución y es no comercial.
+- The credit costs in `core.py` are **estimates**; your ElevenLabs dashboard is the source of truth.
+- Note detection works on tonal sounds; noise and percussion return `—`.
+- Jobs live in memory: they are lost when the server restarts.
+- No per-user authentication: meant for local use (it only listens on `127.0.0.1`).
+- ElevenLabs' free plan requires attribution and is non-commercial.
