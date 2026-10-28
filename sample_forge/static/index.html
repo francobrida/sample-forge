@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sample-forge</title>
+<style>
+  :root { --bg:#f6f5f2; --card:#fff; --ink:#1c1b1a; --mute:#6b6862; --line:#e2dfd8; --acc:#c2410c; --acc-ink:#fff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#141413; --card:#1e1d1b; --ink:#ece9e2; --mute:#9b978e; --line:#33312d; --acc:#f97316; --acc-ink:#1a0e05; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.45 system-ui, sans-serif; }
+  main { max-width: 920px; margin: 0 auto; padding: 24px 16px 64px; }
+  header { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px; }
+  h1 { font-size: 20px; margin: 0; letter-spacing: -.01em; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--mute); margin: 0 0 12px; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-top:16px; }
+  .row { display:flex; flex-wrap:wrap; gap:10px; align-items:end; }
+  label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--mute); }
+  input, select, button { font:inherit; color:var(--ink); background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:7px 9px; }
+  input[type=checkbox] { width:auto; }
+  button { cursor:pointer; }
+  button.primary { background:var(--acc); color:var(--acc-ink); border-color:var(--acc); font-weight:600; }
+  button:disabled { opacity:.5; cursor:default; }
+  .grow { flex:1 1 260px; }
+  #msg { margin-top:10px; min-height:1.4em; color:var(--mute); }
+  #msg.err { color:#dc2626; }
+  .bar { height:6px; border-radius:3px; background:var(--line); overflow:hidden; width:180px; margin-top:4px; }
+  .bar i { display:block; height:100%; background:var(--acc); }
+  ul { list-style:none; margin:0; padding:0; }
+  li { display:flex; align-items:center; gap:10px; padding:9px 0; border-top:1px solid var(--line); }
+  li:first-child { border-top:0; }
+  li .p { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  li .m { color:var(--mute); font-size:12px; font-variant-numeric: tabular-nums; white-space:nowrap; }
+  .tag { font-size:11px; padding:1px 6px; border:1px solid var(--line); border-radius:99px; color:var(--mute); }
+  .note { color:var(--acc); font-weight:600; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>sample-forge</h1>
+    <div style="text-align:right"><small id="budget">…</small><div class="bar"><i id="bar" style="width:0"></i></div></div>
+  </header>
+
+  <section>
+    <h2>Generar</h2>
+    <div class="row">
+      <label>Tipo
+        <select id="kind"><option value="sfx">SFX / foley</option><option value="vox">Voz (hablada)</option></select>
+      </label>
+      <label class="grow">Descripción o texto
+        <input id="prompt" maxlength="450" placeholder="heavy wooden door slam, big hall  ·  o  ·  yeah!">
+      </label>
+      <label>Tomas <input id="n" type="number" min="1" max="8" value="1" style="width:64px"></label>
+      <label class="sfx">Segundos <input id="dur" type="number" min="0.5" max="30" step="0.5" placeholder="auto" style="width:80px"></label>
+      <label class="sfx">Loop <input id="loop" type="checkbox"></label>
+      <label class="vox" hidden>Voice ID <input id="voice" placeholder="por defecto" style="width:150px"></label>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button id="est">Estimar costo</button>
+      <button id="gen" class="primary">Generar</button>
+      <label style="margin-left:auto">API key (si la configuraste) <input id="key" type="password" style="width:150px"></label>
+    </div>
+    <div id="msg"></div>
+  </section>
+
+  <section>
+    <h2>Librería</h2>
+    <div class="row">
+      <label class="grow">Buscar <input id="q" placeholder="door, riser, yeah…"></label>
+      <label>Tipo <select id="fkind"><option value="">todos</option><option value="sfx">sfx</option><option value="vox">vox</option></select></label>
+      <label>Nota <input id="fnote" placeholder="A o A4" style="width:80px"></label>
+      <label>Máx. s <input id="fdur" type="number" min="0.5" step="0.5" style="width:80px"></label>
+      <button id="zip">Exportar selección (.zip)</button>
+    </div>
+    <ul id="list" style="margin-top:12px"></ul>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const store = { get(k) { try { return localStorage.getItem(k) || ""; } catch { return ""; } },
+                set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+$("key").value = store.get("sf_key");
+$("key").onchange = () => { store.set("sf_key", $("key").value); refresh(); };
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { ...opts, headers: { "content-type": "application/json", "x-api-key": $("key").value, ...opts.headers } });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    throw new Error(typeof e.detail === "string" ? e.detail : r.status === 422 ? "Datos inválidos (revisá los campos)" : `Error ${r.status}`);
+  }
+  return r;
+}
+const say = (t, err) => { $("msg").textContent = t; $("msg").className = err ? "err" : ""; };
+
+function body() {
+  const kind = $("kind").value, b = { kind, prompt: $("prompt").value.trim(), n: +$("n").value || 1 };
+  if (kind === "sfx") { if ($("dur").value) b.duration = +$("dur").value; b.loop = $("loop").checked; }
+  else if ($("voice").value.trim()) b.voice = $("voice").value.trim();
+  return b;
+}
+$("kind").onchange = () => {
+  document.querySelectorAll(".sfx").forEach(e => e.hidden = $("kind").value !== "sfx");
+  document.querySelectorAll(".vox").forEach(e => e.hidden = $("kind").value !== "vox");
+};
+
+async function budget() {
+  try {
+    const b = await (await api("/api/budget")).json();
+    $("budget").textContent = `${b.spent} / ${b.budget} créditos este mes`;
+    $("bar").style.width = Math.min(100, 100 * b.spent / b.budget) + "%";
+  } catch (e) { $("budget").textContent = e.message; }
+}
+
+$("est").onclick = async () => {
+  try {
+    const e = await (await api("/api/estimate", { method: "POST", body: JSON.stringify(body()) })).json();
+    say(`${e.new} tomas nuevas (${e.cached} ya en caché): ~${e.credits} créditos. Quedan ${e.left}.`);
+  } catch (e) { say(e.message, true); }
+};
+
+$("gen").onclick = async () => {
+  $("gen").disabled = true;
+  try {
+    let job = await (await api("/api/jobs", { method: "POST", body: JSON.stringify(body()) })).json();
+    while (job.status === "queued" || job.status === "running") {
+      say(job.status === "queued" ? "En cola…" : "Generando…");
+      await new Promise(r => setTimeout(r, 1000));
+      job = await (await api(`/api/jobs/${job.id}`)).json();
+    }
+    if (job.status === "error") throw new Error(job.error);
+    const fresh = job.results.filter(s => !s.cached).length;
+    say(`Listo: ${fresh} nuevas, ${job.results.length - fresh} desde caché.`);
+    $("q").value = ""; await refresh();
+  } catch (e) { say(e.message, true); }
+  $("gen").disabled = false;
+};
+
+const selected = new Set();
+async function refresh() {
+  budget();
+  const p = new URLSearchParams();
+  for (const [k, id] of [["q", "q"], ["kind", "fkind"], ["note", "fnote"], ["max_dur", "fdur"]]) if ($(id).value.trim()) p.set(k, $(id).value.trim());
+  const ul = $("list");
+  try {
+    const rows = await (await api("/api/samples?" + p)).json();
+    ul.replaceChildren(...rows.map(row));
+    if (!rows.length) ul.textContent = "Nada todavía.";
+  } catch (e) { ul.textContent = e.message; }
+}
+
+function row(s) {
+  const li = document.createElement("li");
+  const cb = Object.assign(document.createElement("input"), { type: "checkbox", checked: selected.has(s.id) });
+  cb.onchange = () => cb.checked ? selected.add(s.id) : selected.delete(s.id);
+  const play = Object.assign(document.createElement("button"), { textContent: "▶" });
+  let audio;
+  play.onclick = async () => {
+    try {
+      if (!audio) audio = new Audio(URL.createObjectURL(await (await api(`/api/samples/${s.id}/audio`)).blob()));
+      audio.currentTime = 0; audio.play();
+    } catch (e) { say(e.message, true); }
+  };
+  const p = Object.assign(document.createElement("span"), { className: "p", textContent: s.prompt, title: s.prompt });
+  const tag = Object.assign(document.createElement("span"), { className: "tag", textContent: s.kind + (s.loop ? " · loop" : "") });
+  const m = document.createElement("span");
+  m.className = "m";
+  m.append(s.duration.toFixed(1) + " s · " + s.peak_db.toFixed(1) + " dB · ");
+  const n = Object.assign(document.createElement("span"), { className: "note", textContent: s.note || "—" });
+  m.append(n);
+  li.append(cb, play, p, tag, m);
+  return li;
+}
+
+for (const id of ["q", "fkind", "fnote", "fdur"]) $(id).oninput = () => { clearTimeout(refresh.t); refresh.t = setTimeout(refresh, 250); };
+
+$("zip").onclick = async () => {
+  if (!selected.size) return say("Marcá al menos un sample.", true);
+  try {
+    const blob = await (await api("/api/export.zip?ids=" + [...selected].join(","))).blob();
+    const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: "sample-forge.zip" });
+    a.click(); URL.revokeObjectURL(a.href);
+    say(`${selected.size} samples exportados. Descomprimí en tu carpeta de Ableton.`);
+  } catch (e) { say(e.message, true); }
+};
+
+$("kind").onchange(); refresh();
+</script>
+</body>
+</html>
